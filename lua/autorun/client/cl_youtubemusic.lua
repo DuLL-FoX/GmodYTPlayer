@@ -192,6 +192,8 @@ net.Receive("ytmp_commands", function()
     if string.StartWith(text, "!volume") then
         local cmd = string.Explode(" ", text)
         volume = tonumber(cmd[2])
+        if volume > 100 then volume = 100 end
+        if volume < 0 then volume = 0 end
         LocalPlayer():ChatPrint("Your volume is " .. volume .. "%")
 
         if IsValid(musicPlayer) then
