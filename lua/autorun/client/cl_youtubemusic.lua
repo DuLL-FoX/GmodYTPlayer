@@ -4,23 +4,28 @@ surface.CreateFont("Font", {
     size = 20
 })
 
-local musicPlayer = nil
--- Local value so that players can change their own volume
-local volume = 50
+local musicPlayer
+local volume = 30 -- Local value so that players can change their own volume
 
-local function PlayMusic(videoID)
-    musicPlayer = vgui.Create("DHTML")
-    musicPlayer:SetSize(0, 0)
-    musicPlayer:SetVisible(false)
+local function PlayMusic(videoID, check, isTemp)
+    check = check or 1
+    isTemp = isTemp or false
+    local tempPlayer = vgui.Create("DHTML") -- Creating a temporary player to check without creating a new one
+    tempPlayer:SetSize(0, 0)
+    tempPlayer:SetVisible(false)
 
-    musicPlayer:AddFunction("gmod", "OnVideoData", function(title)
+    tempPlayer:AddFunction("gmod", "OnVideoData", function(title)
         LocalPlayer():ChatPrint("Now playing: " .. title)
     end)
 
+    tempPlayer:AddFunction("gmod", "OnErrorResult", function(result)
+        tempPlayer.errorResult = result
+    end)
+
     if videoID then
-        musicPlayer.videoID = videoID
+        tempPlayer.videoID = videoID
         -- Basically it's js. Interaction functions are described here https://developers.google.com/youtube/iframe_api_reference?hl=ru
-        musicPlayer:SetHTML([[
+        tempPlayer:SetHTML([[
             <!DOCTYPE html>
             <html>
             <head>
@@ -35,27 +40,40 @@ local function PlayMusic(videoID)
                             videoId: ']] .. videoID .. [[',
                             events: {
                                 'onReady': onPlayerReady,
-                                'onStateChange': onPlayerStateChange
+                                'onError': onPlayerError
                             },
                             playerVars: {
                                 'controls': 0,
-                                'autoplay': 1,
+                                'autoplay': ]] .. check .. [[,
                                 'showinfo': 0,
                                 'rel': 0,
                                 'disablekb': 1
                             }
                         });
                     }
+
+                    function onPlayerError(event) {
+                        if (event.data == 101) {
+                            gmod.OnErrorResult(false);
+                        }
+                        else if (event.data == 150) {
+                            gmod.OnErrorResult(false);
+                        }
+                        else {
+                            gmod.OnErrorResult(true);
+                        }
+                    }
+                    
     
                     function onPlayerReady(event) {
-                        event.target.playVideo();
-                        player.setVolume(]] .. volume .. [[);
-                    }
-    
-                    function onPlayerStateChange(event) {
-                        if (event.data == YT.PlayerState.PLAYING) {
+                        if (]] .. check .. [[ != 0) {
+                            event.target.playVideo();
+                            player.setVolume(]] .. volume .. [[);
                             var title = player.getVideoData().title;
                             gmod.OnVideoData(title);
+                        } else {
+                            gmod.OnErrorResult(true);
+                            event.target.stopVideo();
                         }
                     }
                 </script>
@@ -65,7 +83,16 @@ local function PlayMusic(videoID)
             </body>
             </html>
         ]])
-        musicPlayer:SetVisible(false)
+        tempPlayer:SetVisible(false)
+        if isTemp then return tempPlayer end
+
+        if IsValid(musicPlayer) then
+            musicPlayer:RunJavascript("player.stopVideo();")
+            musicPlayer:Remove()
+        end
+
+        -- Set the new music player
+        musicPlayer = tempPlayer
     end
 end
 
@@ -75,6 +102,8 @@ local function CreateMusicPlayerUI()
     frame:SetTitle("")
     frame:Center()
     frame:MakePopup()
+    local frameHeight = frame:GetTall()
+    local frameWidth = frame:GetWide()
 
     frame.Paint = function(self, w, h)
         draw.RoundedBox(2, 0, 0, w, h, Color(0, 0, 0, 200))
@@ -85,31 +114,58 @@ local function CreateMusicPlayerUI()
     urlEntry:SetPos(25, 50)
     urlEntry:SetSize(450, 25)
     urlEntry:SetPlaceholderText("Enter YouTube URL")
+    local stopButton = vgui.Create("DButton", frame)
+    stopButton:SetPos(frameWidth * 0.7, frameHeight * 0.6)
+    stopButton:SetSize(frameWidth * 0.2, 25)
+    stopButton:SetText("Stop")
+
+    stopButton.DoClick = function()
+        net.Start("ytmp_stop_music")
+        net.SendToServer()
+    end
+
     local playButton = vgui.Create("DButton", frame)
-    playButton:SetPos(frame:GetWide() * 0.1, frame:GetTall() * 0.6)
-    playButton:SetSize(frame:GetWide() * 0.2, 25)
+    playButton:SetPos(frameWidth * 0.1, frameHeight * 0.6)
+    playButton:SetSize(frameWidth * 0.2, 25)
     playButton:SetText("Play")
 
     playButton.DoClick = function()
         local url = urlEntry:GetText()
         local videoID = string.match(url, "watch%?v=([%w-_]+)")
+        -- Cheking the link for limitations on the use of music
+        local tempPlayer = PlayMusic(videoID, 0, true)
 
-        if videoID then
-            net.Start("ytmp_play_music")
-            net.WriteString(videoID)
-            net.SendToServer()
-        end
-    end
+        -- Checking the link for correctness
+        if string.StartWith(url, "https") then
+            -- Checking the link for limitations on the use of music
+            timer.Simple(1, function()
+                if tempPlayer.errorResult then
+                    tempPlayer:Remove()
+                    net.Start("ytmp_play_music")
+                    net.WriteString(videoID)
+                    net.SendToServer()
+                else
+                    local error = vgui.Create("DLabel", frame)
+                    error:SetSize(frame:GetWide() * 0.3, 25)
+                    error:SetPos(frame:GetWide() * 0.37, frame:GetTall() * 0.6)
+                    error:SetText("Copyright, cannot be used")
+                    error:SetTextColor(Color(255, 0, 0))
 
-    local stopButton = vgui.Create("DButton", frame)
-    stopButton:SetPos(frame:GetWide() * 0.7, frame:GetTall() * 0.6)
-    stopButton:SetSize(frame:GetWide() * 0.2, 25)
-    stopButton:SetText("Stop")
+                    timer.Simple(3, function()
+                        error:Remove()
+                    end)
+                end
+            end)
+        else
+            local error = vgui.Create("DLabel", frame)
+            error:SetSize(frame:GetWide() * 0.3, 25)
+            error:SetPos(frame:GetWide() * 0.45, frame:GetTall() * 0.6)
+            error:SetText("Invalid URL")
+            error:SetTextColor(Color(255, 0, 0))
 
-    stopButton.DoClick = function()
-        if IsValid(musicPlayer) then
-            musicPlayer:Remove()
-            musicPlayer:RunJavascript("player.stopVideo();")
+            timer.Simple(3, function()
+                error:Remove()
+            end)
         end
     end
 end
@@ -118,35 +174,32 @@ end
 net.Receive("ytmp_update_music", function()
     local videoID = net.ReadString()
 
-    -- Delete added to cut off previous music when starting a new one or stopping
+    -- If the musicPlayer is valid, stop and remove it
     if IsValid(musicPlayer) then
+        musicPlayer:RunJavascript("player.stopVideo();")
         musicPlayer:Remove()
-        return
-    elseif IsValid(musicPlayer) and musicPlayer.videoID == "" then
-        musicPlayer:Remove()
-        return
-    else
-        PlayMusic(videoID)
+    end
+
+    -- If the received videoID is not empty, then play the new music
+    if videoID ~= "" then
+        PlayMusic(videoID, 1, false)
     end
 end)
 
-hook.Add("OnPlayerChat", "ytmp_command_handler", function(ply, text)
-    local cmd = string.Explode(" ", text)
+net.Receive("ytmp_commands", function()
+    local text = net.ReadString()
 
-    if cmd[1] == "!mp" and ply:IsAdmin() then
-        CreateMusicPlayerUI()
-
-        -- Added to not be displayed in the chat
-        return true
-    elseif cmd[1] == "!volume" then
+    if string.StartWith(text, "!volume") then
+        local cmd = string.Explode(" ", text)
         volume = tonumber(cmd[2])
         LocalPlayer():ChatPrint("Your volume is " .. volume .. "%")
 
-        if IsValid(musicPlayer) and volume and volume >= 0 and volume <= 100 then
+        if IsValid(musicPlayer) then
             musicPlayer:RunJavascript("player.setVolume(" .. volume .. ");")
         end
+    end
 
-        -- Same as above
-        return true
+    if string.StartWith(text, "!mp") then
+        CreateMusicPlayerUI()
     end
 end)
