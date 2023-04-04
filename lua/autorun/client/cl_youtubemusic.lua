@@ -136,7 +136,7 @@ local function CreateMusicPlayerUI()
         local tempPlayer = PlayMusic(videoID, 0, true)
 
         -- Checking the link for correctness
-        if string.StartWith(url, "https") then
+        if string.match(url, "youtube") then
             -- Checking the link for limitations on the use of music
             timer.Simple(1, function()
                 if tempPlayer.errorResult then
